@@ -111,19 +111,29 @@ function withinLastTwoDays(iso, tz = DEFAULT_TZ) {
 
 
 // Fallback: pega og:image e article:published_time da página da matéria
+// Fallback: pega og:image e published_time (mais variantes comuns)
 async function fetchArticleMeta(url) {
   try {
     const html = await safeFetch(url);
     const $ = cheerio.load(html);
+
     const ogImage =
       $('meta[property="og:image"]').attr("content") ||
       $('meta[name="twitter:image"]').attr("content") ||
       null;
+
+    // procura várias metatags de data usadas por gov.br/UN/etc.
     const ogTime =
       $('meta[property="article:published_time"]').attr("content") ||
+      $('meta[property="article:modified_time"]').attr("content") ||
+      $('meta[property="og:updated_time"]').attr("content") ||
+      $('meta[name="dc.date"]').attr("content") ||
       $('meta[name="date"]').attr("content") ||
+      $('meta[itemprop="datePublished"]').attr("content") ||
+      $('meta[itemprop="dateModified"]').attr("content") ||
       $("time[datetime]").attr("datetime") ||
       null;
+
     const publishedAt = parseDateTime(ogTime) || null;
     return { ogImage, publishedAt };
   } catch {
@@ -540,14 +550,24 @@ async function getSourceDataForce(src) {
 }
 
 function filterAndSort(items) {
-  const filtered = items.filter((it) => withinLastTwoDays(it.publishedAt));
-  filtered.sort((a, b) => {
-    const da = dayjs(a.publishedAt || 0);
-    const db = dayjs(b.publishedAt || 0);
-    return db.valueOf() - da.valueOf();
+  // 1) mantém itens com data de hoje/ontem
+  // 2) mantém também itens SEM data (para não “sumirem”)
+  const kept = items.filter((it) => {
+    if (!it || !it.title || !it.url) return false;
+    if (!it.publishedAt) return true;        // ✅ mantém sem data
+    return withinLastTwoDays(it.publishedAt); // ✅ mantém hoje/ontem
   });
-  return filtered;
+
+  // Ordena: com data mais recentes primeiro; sem data ficam por último
+  kept.sort((a, b) => {
+    const va = a.publishedAt ? dayjs(a.publishedAt).valueOf() : 0;
+    const vb = b.publishedAt ? dayjs(b.publishedAt).valueOf() : 0;
+    return vb - va;
+  });
+
+  return kept;
 }
+
 
 const app = express();
 app.use(cors());
