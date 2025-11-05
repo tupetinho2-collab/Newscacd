@@ -31,7 +31,8 @@ async function safeFetch(url, opts = {}) {
       ...opts,
       signal: controller.signal,
       headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8,es;q=0.7",
         ...(opts.headers || {}),
@@ -43,61 +44,53 @@ async function safeFetch(url, opts = {}) {
     clearTimeout(timeout);
   }
 }
-
-function normalizeWhitespace(s) {
-  return (s || "").replace(/\s+/g, " ").trim();
-}
-
-// Parser de datas robusto (ISO > formatos comuns > dd/mm/yyyy)
 function parseDateTime(raw) {
   if (!raw) return null;
 
-  // 1) ISO em atributos (ideal)
-  const isoMatch = raw.match(
-    /\d{4}-\d{2}-\d{2}([Tt ]\d{2}:\d{2}(:\d{2})?([+-]\d{2}:?\d{2}|Z)?)?/
-  );
+  // Tenta ISO primeiro
+  const isoMatch = raw.match(/\d{4}-\d{2}-\d{2}([Tt ]\d{2}:\d{2}(:\d{2})?([+-]\d{2}:?\d{2}|Z)?)?/);
   if (isoMatch) {
     const d = dayjs.tz(isoMatch[0], DEFAULT_TZ);
     if (d.isValid()) return d.toISOString();
   }
 
-  // 2) Limpeza e tentativas com formatos frequentes
-  const cleaned = normalizeWhitespace(raw)
+  // Normalizações comuns no gov.br etc.
+  let cleaned = normalizeWhitespace(raw)
     .replace(/\|/g, " ")
     .replace(/Publicado em:?\s*/i, "")
     .replace(/Publicada em:?\s*/i, "")
-    .replace(/Atualizado em:?\s*/i, "");
+    .replace(/Atualizado em:?\s*/i, "")
+    .replace(/[–—−]/g, "-")           // hifens variantes
+    .replace(/\bàs?\s+/i, " ")         // "às 14h" -> " 14h"
+    .replace(/(\d{1,2})h(\d{2})/g, "$1:$2") // 18h45 -> 18:45
+    .replace(/(\d{1,2})h\b/g, "$1:00");     // 9h -> 9:00
 
-  // Obs.: para nomes de mês em pt/es/en, o dayjs exigiria locale para PARSE textual,
-  // então priorizamos números; quando houver nome de mês, a maioria das fontes já
-  // fornece <time datetime="..."> (capturado acima). Ainda assim, tentamos alguns formatos.
-  const candidates = [
-    // PT/ES numéricos
+  // Formatos numéricos mais comuns
+  const formats = [
     "DD/MM/YYYY HH:mm",
     "DD/MM/YYYY",
     "D/M/YYYY",
-    // EN textuais comuns (casos residuais em UN/UNFCCC)
+    "DD-MM-YYYY HH:mm",
+    "DD-MM-YYYY",
+    "DD.MM.YYYY HH:mm",
+    "DD.MM.YYYY",
+    // Inglês (UN/UNFCCC)
     "D MMMM YYYY HH:mm",
     "D MMMM YYYY",
-    "MMMM D, YYYY",
     "MMMM D, YYYY HH:mm",
+    "MMMM D, YYYY",
   ];
 
-  for (const fmt of candidates) {
-    // ✅ assinatura correta: (string, format?, timezone?)
-    const d = dayjs.tz(cleaned, fmt, DEFAULT_TZ);
+  for (const fmt of formats) {
+    const d = dayjs.tz(cleaned, fmt, DEFAULT_TZ); // (string, format, tz)
     if (d.isValid()) return d.toISOString();
   }
 
-  // 3) Extração dd/mm/yyyy (com ou sem hora)
-  const dmY = cleaned.match(
-    /(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:\s+(\d{2}:\d{2}))?/
-  );
+  // Último recurso: extrair dd/mm/yyyy (ou -, .) com hora opcional
+  const dmY = cleaned.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})(?:\s+(\d{1,2}:\d{2}))?/);
   if (dmY) {
     const [, dd, mm, yyyy, hhmm] = dmY;
-    const s = `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}${
-      hhmm ? "T" + hhmm + ":00" : "T12:00:00"
-    }`;
+    const s = `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}${hhmm ? "T" + hhmm + ":00" : "T12:00:00"}`;
     const d = dayjs.tz(s, DEFAULT_TZ);
     if (d.isValid()) return d.toISOString();
   }
@@ -111,9 +104,11 @@ function withinLastTwoDays(iso, tz = DEFAULT_TZ) {
   const startToday = now.startOf("day");
   const startYesterday = startToday.subtract(1, "day");
   const endToday = startToday.endOf("day");
+
   const d = dayjs.tz(iso, tz);
-  return d.isAfter(startYesterday) && d.isBefore(endToday);
+  return d.valueOf() >= startYesterday.valueOf() && d.valueOf() <= endToday.valueOf();
 }
+
 
 // Fallback: pega og:image e article:published_time da página da matéria
 async function fetchArticleMeta(url) {
@@ -146,7 +141,7 @@ async function scrapeUNNewsPT() {
   $(".view-content .views-row").each((_, el) => {
     const title = normalizeWhitespace($(el).find("h2 a").text());
     const link = $(el).find("h2 a").attr("href");
-    const img = $(el).find("img").attr("src");
+    const img = $(el).find("img").attr("data-src") || $(el).find("img").attr("src");
     const timeText =
       $(el).find("time").attr("datetime") ||
       $(el).find(".views-field-created .field-content").text();
@@ -181,7 +176,7 @@ async function scrapeMRE() {
     const a = $(el).find("a").first();
     const title = normalizeWhitespace(a.text());
     const link = a.attr("href");
-    const img = $(el).find("img").attr("src");
+    const img = $(el).find("img").attr("data-src") || $(el).find("img").attr("src");
     const timeText =
       $(el).find("time").attr("datetime") ||
       $(el).find(".data, .data-publicacao").text();
@@ -216,7 +211,7 @@ async function scrapeUNEP() {
     const a = $(el).find("h3 a, h2 a").first();
     const title = normalizeWhitespace(a.text());
     const link = a.attr("href");
-    const img = $(el).find("img").attr("src");
+    const img = $(el).find("img").attr("data-src") || $(el).find("img").attr("src");
     const timeText =
       $(el).find("time").attr("datetime") ||
       $(el).find(".date, .field--name-field-date").text();
@@ -251,7 +246,7 @@ async function scrapeUNFCCC() {
       const a = $(el).find("h2 a, h3 a").first();
       const title = normalizeWhitespace(a.text());
       const link = a.attr("href");
-      const img = $(el).find("img").attr("src");
+      const img = $(el).find("img").attr("data-src") || $(el).find("img").attr("src");
       const timeText =
         $(el).find("time").attr("datetime") || $(el).find(".date").text();
       const publishedAt = parseDateTime(timeText);
@@ -286,7 +281,7 @@ async function scrapeRelacoesExteriores() {
     const a = $(el).find("h2 a, .entry-title a").first();
     const title = normalizeWhitespace(a.text());
     const link = a.attr("href");
-    const img = $(el).find("img").attr("src");
+    const img = $(el).find("img").attr("data-src") || $(el).find("img").attr("src");
     const timeText =
       $(el).find("time").attr("datetime") || $(el).find(".posted-on").text();
     const publishedAt = parseDateTime(timeText);
@@ -313,7 +308,7 @@ async function scrapeMMA() {
     const a = $(el).find("a").first();
     const title = normalizeWhitespace(a.text());
     const link = a.attr("href");
-    const img = $(el).find("img").attr("src");
+    const img = $(el).find("img").attr("data-src") || $(el).find("img").attr("src");
     const timeText =
       $(el).find("time").attr("datetime") ||
       $(el).find(".data, .data-publicacao").text();
@@ -349,7 +344,7 @@ async function scrapeInfoBRICS() {
       $(el).find("h3, h2").first().text() || a.text()
     );
     const link = a.attr("href");
-    const img = $(el).find("img").attr("src");
+    const img = $(el).find("img").attr("data-src") || $(el).find("img").attr("src");
     const timeText =
       $(el).find(".date, time").first().text() ||
       $(el).find("time").attr("datetime");
@@ -424,7 +419,7 @@ async function scrapeMDIC() {
     const a = $(el).find("a").first();
     const title = normalizeWhitespace(a.text());
     const link = a.attr("href");
-    const img = $(el).find("img").attr("src");
+    const img = $(el).find("img").attr("data-src") || $(el).find("img").attr("src");
     const timeText =
       $(el).find("time").attr("datetime") ||
       $(el).find(".data, .data-publicacao").text();
@@ -458,7 +453,7 @@ async function scrapeGovBRMeioAmbienteClima() {
     const a = $(el).find("a").first();
     const title = normalizeWhitespace(a.text());
     const link = a.attr("href");
-    const img = $(el).find("img").attr("src");
+    const img = $(el).find("img").attr("data-src") || $(el).find("img").attr("src");
     const timeText =
       $(el).find("time").attr("datetime") ||
       $(el).find(".data, .data-publicacao").text();
@@ -492,7 +487,7 @@ async function scrapeEIR() {
     const a = $(el).find("h2 a, .entry-title a").first();
     const title = normalizeWhitespace(a.text());
     const link = a.attr("href");
-    const img = $(el).find("img").attr("src");
+    const img = $(el).find("img").attr("data-src") || $(el).find("img").attr("src");
     const timeText =
       $(el).find("time").attr("datetime") || $(el).find(".posted-on").text();
     const publishedAt = parseDateTime(timeText);
