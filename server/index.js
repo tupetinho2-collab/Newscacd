@@ -20,11 +20,23 @@ const DEFAULT_TZ = "America/Sao_Paulo";
 const PORT = process.env.PORT || 4000;
 
 // Fetch com timeout
+// Utility: safe fetch with timeout + headers "reais"
 async function safeFetch(url, opts = {}) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), opts.timeout || 20000);
+  const timeoutMs = opts.timeout ?? 20000; // 20s
+  const timeout = setTimeout(() => controller.abort(new Error("timeout")), timeoutMs);
+
   try {
-    const res = await fetch(url, { ...opts, signal: controller.signal });
+    const res = await fetch(url, {
+      ...opts,
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8,es;q=0.7",
+        ...(opts.headers || {}),
+      },
+    });
     if (!res.ok) throw new Error(`HTTP ${res.status} on ${url}`);
     return await res.text();
   } finally {
@@ -550,31 +562,41 @@ app.get("/", (req, res) => {
   res.sendFile(path.join(clientDist, "index.html"));
 });
 
-// Agregado
+// Aggregate endpoint (tolerante a falhas por fonte)
 app.get("/api/news", async (req, res) => {
   const { sources, force } = req.query;
   const only = sources ? String(sources).split(",").map((s) => s.trim()) : null;
   const selected = only ? SOURCES.filter((s) => only.includes(s.key)) : SOURCES;
+
   try {
-    const results = await Promise.all(
-      selected.map((s) => (force ? getSourceDataForce(s) : getSourceData(s)))
-    );
+    const tasks = selected.map((s) => (force ? getSourceDataForce(s) : getSourceData(s)));
+    const settled = await Promise.allSettled(tasks);
+
     const now = dayjs().tz(DEFAULT_TZ);
-    res.json({
+    const payload = {
       tz: DEFAULT_TZ,
       generatedAt: now.toISOString(),
-      sources: selected.map((s, i) => ({
-        key: s.key,
-        name: s.name,
-        color: s.color,
-        items: filterAndSort(results[i]).map((it) => ({
-          title: it.title,
-          url: it.url,
-          image: it.image,
-          publishedAt: it.publishedAt,
-        })),
-      })),
-    });
+      sources: selected.map((s, i) => {
+        const r = settled[i];
+        const items = r.status === "fulfilled" ? r.value : [];
+        const error = r.status === "rejected" ? (r.reason?.message || String(r.reason)) : null;
+        if (error) console.error(`[${s.key}]`, error);
+        return {
+          key: s.key,
+          name: s.name,
+          color: s.color,
+          items: filterAndSort(items).map((it) => ({
+            title: it.title,
+            url: it.url,
+            image: it.image,
+            publishedAt: it.publishedAt,
+          })),
+          error, // opcional: o front pode exibir aviso na aba
+        };
+      }),
+    };
+
+    res.json(payload); // entregamos o que deu certo
   } catch (e) {
     res.status(500).json({ error: String(e) });
   }
