@@ -1,12 +1,11 @@
-
 services:
   - type: web
     name: radar-de-noticias
     env: node
     plan: free
-    autoDeploy: true
+    rootDir: news_site
     buildCommand: |
-      npm ci
+      npm ci || true
       cd client && npm ci && npm run build && cd ..
       cd server && npm ci
     startCommand: node server/index.js
@@ -14,4 +13,3 @@ services:
       - key: NODE_VERSION
         value: 18
     healthCheckPath: /
-    # root is repo root; server serves client/dist
