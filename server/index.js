@@ -547,7 +547,7 @@ app.use(cors());
 
 // Health
 app.get("/", (req, res) => {
-  res.type("text/plain").send("News server up. Use /api/news");
+  res.sendFile(path.join(clientDist, "index.html"));
 });
 
 // Agregado
