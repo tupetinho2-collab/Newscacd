@@ -1,4 +1,4 @@
-// Use CommonJS aqui também para evitar incompatibilidades em build
+// client/tailwind.config.cjs
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: ['./index.html', './src/**/*.{js,jsx,ts,tsx}'],
