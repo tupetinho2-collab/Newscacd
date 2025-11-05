@@ -352,7 +352,7 @@ async function scrapeIBGE() {
       items.push({
         title,
         url: link.startsWith("http") ? link : `https://agenciadenoticias.ibge.gov.br${link}`,
-        image: img && (img.startswith("http") ? img : `https://agenciadenoticias.ibge.gov.br${img}`),
+        image: img && (img.startsWith("http") ? img : `https://agenciadenoticias.ibge.gov.br${img}`),
         publishedAt
       });
     }
