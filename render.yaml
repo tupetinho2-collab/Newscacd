@@ -4,7 +4,6 @@ services:
     env: node
     plan: free
     autoDeploy: true
-    rootDir: news_site
     buildCommand: |
       cd client && npm install && npm run build && cd ..
       cd server && npm install
